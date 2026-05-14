@@ -1,0 +1,29 @@
+# --- 절대 GitHub에 올리면 안 되는 것 ---
+.env
+.env.*
+*.env
+.streamlit/secrets.toml
+
+# --- Python 부산물 ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- OS 부산물 ---
+Thumbs.db
+.DS_Store
+
+# --- IDE ---
+.vscode/
+.idea/
+
+# --- 사용자 다운로드 결과 (혹시 폴더 안에 떨어진 경우) ---
+*.xlsx
+*.html
+!exporters_template.html

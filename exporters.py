@@ -1,0 +1,148 @@
+"""Excel · HTML 변환 함수"""
+import io
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+
+# === Excel ===
+
+def to_excel_bytes(summary_df: pd.DataFrame, raw_df: pd.DataFrame) -> bytes:
+    """단지별 요약 + 전체 거래내역 2시트 Excel을 메모리 bytes로 반환"""
+    wb = Workbook()
+    dark = PatternFill("solid", fgColor="2D2D2D")
+    white_bold = Font(color="FFFFFF", bold=True, name="맑은 고딕", size=10)
+    center = Alignment(wrap_text=True, vertical="center", horizontal="center")
+    left = Alignment(wrap_text=True, vertical="center", horizontal="left")
+    right = Alignment(wrap_text=True, vertical="center", horizontal="right")
+    thin = Border(*[Side(style="thin", color="CCCCCC")] * 4)
+
+    NUM_COLS_SUMMARY = {"평형(평)", "거래건수", "평균 거래가(억)", "최고 거래가(억)",
+                        "최저 거래가(억)", "평균 평단가(만원/평)"}
+    NUM_COLS_RAW = {"전용면적(㎡)", "평형(평)", "거래금액(만원)", "거래금액(억)", "평단가(만원/평)"}
+
+    def write_sheet(ws, df, widths, num_cols):
+        headers = list(df.columns)
+        for c, h in enumerate(headers, 1):
+            cell = ws.cell(1, c, h)
+            cell.fill, cell.font, cell.alignment, cell.border = dark, white_bold, center, thin
+        for r_idx, row in enumerate(df.itertuples(index=False), 2):
+            for c, key in enumerate(headers, 1):
+                v = row[c - 1]
+                cell = ws.cell(r_idx, c, v)
+                cell.alignment = right if key in num_cols else left
+                cell.border = thin
+                if key in num_cols and isinstance(v, (int, float)):
+                    cell.number_format = "#,##0.00" if isinstance(v, float) else "#,##0"
+        for c, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(c)].width = w
+        ws.freeze_panes = "A2"
+        ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.print_options.horizontalCentered = True
+
+    ws1 = wb.active
+    ws1.title = "단지별 요약"
+    write_sheet(ws1, summary_df, [9, 14, 26, 9, 8, 13, 13, 13, 15, 13, 13], NUM_COLS_SUMMARY)
+
+    ws2 = wb.create_sheet("전체 거래내역")
+    write_sheet(ws2, raw_df, [11, 9, 14, 26, 12, 9, 13, 11, 13, 6, 10, 10, 10, 14], NUM_COLS_RAW)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# === HTML ===
+
+HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+  body {{ font-family: "맑은 고딕", -apple-system, sans-serif; margin: 24px; color: #222; }}
+  h1 {{ font-size: 20px; margin-bottom: 8px; }}
+  .meta {{ color: #666; font-size: 13px; margin-bottom: 24px; }}
+  .summary-cards {{ display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }}
+  .card {{ background: #f6f6f6; border-radius: 8px; padding: 14px 18px; min-width: 140px; }}
+  .card .label {{ font-size: 12px; color: #888; }}
+  .card .value {{ font-size: 22px; font-weight: 700; color: #2D2D2D; }}
+  h2 {{ font-size: 16px; margin-top: 32px; border-bottom: 2px solid #2D2D2D; padding-bottom: 6px; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 12px; }}
+  thead th {{ background: #2D2D2D; color: #fff; padding: 8px 6px; text-align: center; font-weight: 600; }}
+  tbody td {{ border: 1px solid #DDD; padding: 6px; }}
+  tbody tr:nth-child(even) {{ background: #fafafa; }}
+  td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .footer {{ margin-top: 36px; color: #999; font-size: 11px; }}
+</style>
+</head>
+<body>
+<h1>🏢 {title}</h1>
+<div class="meta">{meta}</div>
+
+<div class="summary-cards">
+  <div class="card"><div class="label">총 거래</div><div class="value">{total_count}건</div></div>
+  <div class="card"><div class="label">평균 거래가</div><div class="value">{avg_price}억</div></div>
+  <div class="card"><div class="label">평균 평단가</div><div class="value">{avg_ppp}만/평</div></div>
+  <div class="card"><div class="label">단지·평형 군집</div><div class="value">{group_count}개</div></div>
+</div>
+
+<h2>📋 단지별 요약</h2>
+{summary_html}
+
+<h2>📑 전체 거래내역</h2>
+{raw_html}
+
+<div class="footer">
+  데이터 출처: 국토교통부 공공데이터포털 (RTMSDataSvcAptTrade) ·
+  생성: {gen_at}
+</div>
+</body>
+</html>"""
+
+
+def _df_to_html_table(df: pd.DataFrame, num_cols: set) -> str:
+    cols = list(df.columns)
+    th = "".join(f"<th>{c}</th>" for c in cols)
+    rows_html = []
+    for row in df.itertuples(index=False):
+        tds = []
+        for i, c in enumerate(cols):
+            v = row[i]
+            cls = ' class="num"' if c in num_cols else ""
+            if isinstance(v, float):
+                disp = f"{v:,.2f}"
+            elif isinstance(v, int):
+                disp = f"{v:,}"
+            else:
+                disp = "" if v is None else str(v)
+            tds.append(f"<td{cls}>{disp}</td>")
+        rows_html.append("<tr>" + "".join(tds) + "</tr>")
+    return f"<table><thead><tr>{th}</tr></thead><tbody>{''.join(rows_html)}</tbody></table>"
+
+
+def to_html_bytes(summary_df: pd.DataFrame, raw_df: pd.DataFrame,
+                  title: str, meta: str, gen_at: str) -> bytes:
+    NUM_COLS_SUMMARY = {"평형(평)", "거래건수", "평균 거래가(억)", "최고 거래가(억)",
+                        "최저 거래가(억)", "평균 평단가(만원/평)"}
+    NUM_COLS_RAW = {"전용면적(㎡)", "평형(평)", "거래금액(만원)", "거래금액(억)", "평단가(만원/평)"}
+
+    total_count = len(raw_df)
+    avg_price = f"{raw_df['거래금액(억)'].mean():.2f}" if total_count else "-"
+    avg_ppp = f"{int(raw_df[raw_df['평단가(만원/평)'] > 0]['평단가(만원/평)'].mean()):,}" if total_count else "-"
+    group_count = len(summary_df)
+
+    html = HTML_TEMPLATE.format(
+        title=title, meta=meta,
+        total_count=total_count, avg_price=avg_price, avg_ppp=avg_ppp,
+        group_count=group_count,
+        summary_html=_df_to_html_table(summary_df, NUM_COLS_SUMMARY),
+        raw_html=_df_to_html_table(raw_df, NUM_COLS_RAW),
+        gen_at=gen_at,
+    )
+    return html.encode("utf-8")
