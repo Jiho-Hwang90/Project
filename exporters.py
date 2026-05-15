@@ -1,4 +1,4 @@
-"""Excel · HTML 변환 함수"""
+"""Excel · HTML 변환 함수 (매매·전월세 공용)"""
 import io
 import pandas as pd
 from openpyxl import Workbook
@@ -8,8 +8,10 @@ from openpyxl.utils import get_column_letter
 
 # === Excel ===
 
-def to_excel_bytes(summary_df: pd.DataFrame, raw_df: pd.DataFrame) -> bytes:
-    """단지별 요약 + 전체 거래내역 2시트 Excel을 메모리 bytes로 반환"""
+def to_excel_bytes(summary_df: pd.DataFrame, raw_df: pd.DataFrame,
+                   num_cols_summary: set, num_cols_raw: set,
+                   summary_widths: list[int], raw_widths: list[int]) -> bytes:
+    """단지별 요약 + 전체 내역 2시트 Excel을 메모리 bytes로 반환"""
     wb = Workbook()
     dark = PatternFill("solid", fgColor="2D2D2D")
     white_bold = Font(color="FFFFFF", bold=True, name="맑은 고딕", size=10)
@@ -17,10 +19,6 @@ def to_excel_bytes(summary_df: pd.DataFrame, raw_df: pd.DataFrame) -> bytes:
     left = Alignment(wrap_text=True, vertical="center", horizontal="left")
     right = Alignment(wrap_text=True, vertical="center", horizontal="right")
     thin = Border(*[Side(style="thin", color="CCCCCC")] * 4)
-
-    NUM_COLS_SUMMARY = {"평형(평)", "거래건수", "평균 거래가(억)", "최고 거래가(억)",
-                        "최저 거래가(억)", "평균 평단가(만원/평)"}
-    NUM_COLS_RAW = {"전용면적(㎡)", "평형(평)", "거래금액(만원)", "거래금액(억)", "평단가(만원/평)"}
 
     def write_sheet(ws, df, widths, num_cols):
         headers = list(df.columns)
@@ -47,10 +45,10 @@ def to_excel_bytes(summary_df: pd.DataFrame, raw_df: pd.DataFrame) -> bytes:
 
     ws1 = wb.active
     ws1.title = "단지별 요약"
-    write_sheet(ws1, summary_df, [9, 14, 26, 9, 8, 13, 13, 13, 15, 13, 13], NUM_COLS_SUMMARY)
+    write_sheet(ws1, summary_df, summary_widths, num_cols_summary)
 
-    ws2 = wb.create_sheet("전체 거래내역")
-    write_sheet(ws2, raw_df, [11, 9, 14, 26, 12, 9, 13, 11, 13, 6, 10, 10, 10, 14], NUM_COLS_RAW)
+    ws2 = wb.create_sheet("전체 내역")
+    write_sheet(ws2, raw_df, raw_widths, num_cols_raw)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -86,20 +84,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <div class="meta">{meta}</div>
 
 <div class="summary-cards">
-  <div class="card"><div class="label">총 거래</div><div class="value">{total_count}건</div></div>
-  <div class="card"><div class="label">평균 거래가</div><div class="value">{avg_price}억</div></div>
-  <div class="card"><div class="label">평균 평단가</div><div class="value">{avg_ppp}만/평</div></div>
-  <div class="card"><div class="label">단지·평형 군집</div><div class="value">{group_count}개</div></div>
+{cards_html}
 </div>
 
 <h2>📋 단지별 요약</h2>
 {summary_html}
 
-<h2>📑 전체 거래내역</h2>
+<h2>📑 전체 내역</h2>
 {raw_html}
 
 <div class="footer">
-  데이터 출처: 국토교통부 공공데이터포털 (RTMSDataSvcAptTrade) ·
+  데이터 출처: 국토교통부 공공데이터포털 ({api_name}) ·
   생성: {gen_at}
 </div>
 </body>
@@ -127,22 +122,19 @@ def _df_to_html_table(df: pd.DataFrame, num_cols: set) -> str:
 
 
 def to_html_bytes(summary_df: pd.DataFrame, raw_df: pd.DataFrame,
-                  title: str, meta: str, gen_at: str) -> bytes:
-    NUM_COLS_SUMMARY = {"평형(평)", "거래건수", "평균 거래가(억)", "최고 거래가(억)",
-                        "최저 거래가(억)", "평균 평단가(만원/평)"}
-    NUM_COLS_RAW = {"전용면적(㎡)", "평형(평)", "거래금액(만원)", "거래금액(억)", "평단가(만원/평)"}
-
-    total_count = len(raw_df)
-    avg_price = f"{raw_df['거래금액(억)'].mean():.2f}" if total_count else "-"
-    avg_ppp = f"{int(raw_df[raw_df['평단가(만원/평)'] > 0]['평단가(만원/평)'].mean()):,}" if total_count else "-"
-    group_count = len(summary_df)
-
+                  title: str, meta: str, gen_at: str,
+                  cards: list[tuple[str, str]],
+                  num_cols_summary: set, num_cols_raw: set,
+                  api_name: str = "RTMSDataSvcAptTrade") -> bytes:
+    cards_html = "".join(
+        f'<div class="card"><div class="label">{label}</div>'
+        f'<div class="value">{value}</div></div>'
+        for label, value in cards
+    )
     html = HTML_TEMPLATE.format(
-        title=title, meta=meta,
-        total_count=total_count, avg_price=avg_price, avg_ppp=avg_ppp,
-        group_count=group_count,
-        summary_html=_df_to_html_table(summary_df, NUM_COLS_SUMMARY),
-        raw_html=_df_to_html_table(raw_df, NUM_COLS_RAW),
-        gen_at=gen_at,
+        title=title, meta=meta, cards_html=cards_html,
+        summary_html=_df_to_html_table(summary_df, num_cols_summary),
+        raw_html=_df_to_html_table(raw_df, num_cols_raw),
+        gen_at=gen_at, api_name=api_name,
     )
     return html.encode("utf-8")
