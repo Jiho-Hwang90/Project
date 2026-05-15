@@ -222,6 +222,12 @@ with st.sidebar:
 
     go = st.button("🔥 조회", use_container_width=True, type="primary")
 
+    st.markdown("---")
+    st.caption(
+        "© 2026 [Jiho-Hwang90](https://github.com/Jiho-Hwang90/Project) "
+        "· Built with Streamlit"
+    )
+
 
 # === 조회 동작 ===
 if go:
